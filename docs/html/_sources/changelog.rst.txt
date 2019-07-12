@@ -4,6 +4,64 @@ Changelog
 0.9
 ---
 
+Version 0.9.53
+^^^^^^^^^^^^^^
+
+* Fix bug #155 (IB.commissionReportEvent not firing).
+* Help editors with the code completion for Events.
+
+Version 0.9.52
+^^^^^^^^^^^^^^
+
+* Fix Client.exerciseOptions (bug #152).
+
+Version 0.9.51
+^^^^^^^^^^^^^^
+
+* Fix ``ib.placeOrder`` for older TWS/gateway versions.
+* Better handling of unclean disconnects.
+
+Version 0.9.50
+^^^^^^^^^^^^^^
+
+* Fix ``execDetailsEvent`` regression.
+* Added ``readonly`` argument to ``ib.connect`` method. Set this to ``True``
+  when the API is in read-only mode.
+
+Version 0.9.49
+^^^^^^^^^^^^^^
+
+* ``ib.reqCompletedOrders()`` request added (requires TWS/gateway >= 976).
+  Completed orders are automatically synced on connect and are available from
+  ``ib.trades()``, complete with fills and commission info.
+* Fixed bug #144.
+
+Version 0.9.48
+^^^^^^^^^^^^^^
+
+* ``Ticker.halted`` field added.
+* ``Client.reqFundamentalData`` fixed.
+
+Version 0.9.47
+^^^^^^^^^^^^^^
+
+* ``ibapi`` package from IB is no longer needed, ib_insync handles its own
+  socket protocol encoding and decoding now.
+* Documentation moved to `readthedocs <https://ib-insync.readthedocs.io>`_ as
+  rawgit will cease operation later this year.
+* Blocking requests will now raise ``ConnectionError`` on a connection failure.
+  This also goes for ``util.run``, ``util.timeRange``, etc.
+
+Version 0.9.46
+^^^^^^^^^^^^^^
+
+* ``Event`` class has been replaced with the one from
+  `eventkit <https://github.com/erdewit/eventkit>`_.
+* Event-driven bar construction from ticks added (via ``Ticker.updateEvent``)
+* Fixed bug #136.
+* Default request throttling is now 45 requests/s for compatibility with
+  TWS/gateway 974 and higher.
+
 Version 0.9.45
 ^^^^^^^^^^^^^^
 

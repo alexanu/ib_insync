@@ -5,10 +5,9 @@ import time
 from contextlib import suppress
 from typing import List, Iterator, Awaitable, Union
 
-import ibapi.account_summary_tags
+from eventkit import Event
 
 import ib_insync.util as util
-from ib_insync.event import Event
 from ib_insync.client import Client
 from ib_insync.wrapper import Wrapper
 from ib_insync.contract import Contract
@@ -29,7 +28,7 @@ __all__ = ['IB']
 class IB:
     """
     Provides both a blocking and an asynchronous interface
-    to the IB Python API, using asyncio networking and event loop.
+    to the IB API, using asyncio networking and event loop.
 
     The IB class offers direct access to the current state, such as
     orders, executions, positions, tickers etc. This state is
@@ -83,9 +82,11 @@ class IB:
     :meth:`.sleep` instead.
 
     Attributes:
-        RequestTimeout (float): Timeout (in seconds) to wait for a request
-          to finish before raising ``asyncio.TimeoutError``.
+        RequestTimeout (float): Timeout (in seconds) to wait for a
+          blocking request to finish before raising ``asyncio.TimeoutError``.
           The default value of 0 will wait indefinitely.
+          Note: This timeout is not used for the ``*Async`` methods.
+
 
     Events:
         * ``connectedEvent`` ():
@@ -167,7 +168,7 @@ class IB:
           specified with :meth:`.setTimeout`. The value emitted is the period
           in seconds since the last update.
 
-        Note that it is not advisible to place new requests inside an event
+        Note that it is not advisable to place new requests inside an event
         handler as it may lead to too much recursion.
     """
 
@@ -185,11 +186,36 @@ class IB:
     RequestTimeout = 0
 
     def __init__(self):
-        Event.init(self, IB.events)
+        self._createEvents()
         self.wrapper = Wrapper(self)
         self.client = Client(self.wrapper)
         self.client.apiEnd += self.disconnectedEvent
         self._logger = logging.getLogger('ib_insync.ib')
+
+    def _createEvents(self):
+        self.connectedEvent = Event('connectedEvent')
+        self.disconnectedEvent = Event('disconnectedEvent')
+        self.updateEvent = Event('updateEvent')
+        self.pendingTickersEvent = Event('pendingTickersEvent')
+        self.barUpdateEvent = Event('barUpdateEvent')
+        self.newOrderEvent = Event('newOrderEvent')
+        self.orderModifyEvent = Event('orderModifyEvent')
+        self.cancelOrderEvent = Event('cancelOrderEvent')
+        self.openOrderEvent = Event('openOrderEvent')
+        self.orderStatusEvent = Event('orderStatusEvent')
+        self.execDetailsEvent = Event('execDetailsEvent')
+        self.commissionReportEvent = Event('commissionReportEvent')
+        self.updatePortfolioEvent = Event('updatePortfolioEvent')
+        self.positionEvent = Event('positionEvent')
+        self.accountValueEvent = Event('accountValueEvent')
+        self.accountSummaryEvent = Event('accountSummaryEvent')
+        self.pnlEvent = Event('pnlEvent')
+        self.pnlSingleEvent = Event('pnlSingleEvent')
+        self.scannerDataEvent = Event('scannerDataEvent')
+        self.tickNewsEvent = Event('tickNewsEvent')
+        self.newsBulletinEvent = Event('newsBulletinEvent')
+        self.errorEvent = Event('errorEvent')
+        self.timeoutEvent = Event('timeoutEvent')
 
     def __del__(self):
         self.disconnect()
@@ -208,7 +234,7 @@ class IB:
 
     def connect(
             self, host: str = '127.0.0.1', port: int = 7497,
-            clientId: int = 1, timeout: float = 2):
+            clientId: int = 1, timeout: float = 2, readonly: bool = False):
         """
         Connect to a running TWS or IB gateway application.
         After the connection is made the client is fully synchronized
@@ -225,15 +251,16 @@ class IB:
             timeout: If establishing the connection takes longer than
                 ``timeout`` seconds then the ``asyncio.TimeoutError`` exception
                 is raised. Set to 0 to disable timeout.
+            readonly: Set to ``True`` when API is in read-only mode.
         """
-        return self._run(self.connectAsync(host, port, clientId, timeout))
+        return self._run(self.connectAsync(
+            host, port, clientId, timeout, readonly))
 
     def disconnect(self):
         """
         Disconnect from a TWS or IB gateway application.
         This will clear all session state.
         """
-        self.wrapper.reset()
         if not self.client.isConnected():
             return
         stats = self.client.connectionStats()
@@ -273,8 +300,8 @@ class IB:
         .. note::
             A loop with ``waitOnUpdate`` should not be used to harvest
             tick data from tickers, since some ticks can go missing.
-            This happens when multiple updates occur near simultaneously,
-            the ticks from the first updates are then cleared.
+            This happens when multiple updates occur almost simultaneously;
+            The ticks from the first update are then cleared.
             Use events instead to prevent this.
         """
         if timeout:
@@ -287,7 +314,7 @@ class IB:
     def loopUntil(
             self, condition=None, timeout: float = 0) -> Iterator[object]:
         """
-        Iteratate until condition is met, with optional timeout in seconds.
+        Iterate until condition is met, with optional timeout in seconds.
         The yielded value is that of the condition or False when timed out.
 
         Args:
@@ -767,6 +794,15 @@ class IB:
         """
         return self._run(self.reqAllOpenOrdersAsync())
 
+    def reqCompletedOrders(self, apiOnly: bool) -> List[Trade]:
+        """
+        Request and return a list of completed trades.
+
+        Args:
+            apiOnly: Request only API orders (not manually placed TWS orders).
+        """
+        return self._run(self.reqCompletedOrdersAsync(apiOnly))
+
     def reqExecutions(
             self, execFilter: ExecutionFilter = None) -> List[Fill]:
         """
@@ -1021,7 +1057,7 @@ class IB:
 
         Args:
             bars: The bar list that was obtained from ``reqHistoricalData``
-            with a keepUpToDate subscription.
+                with a keepUpToDate subscription.
 
         """
         self.client.cancelHistoricalData(bars.reqId)
@@ -1051,7 +1087,7 @@ class IB:
             endDateTime: One of ``startDateTime`` or ``endDateTime`` can
                 be given, the other must be blank.
             numberOfTicks: Number of ticks to request (1000 max). The actual
-                result can contain a bit more to accomodate all ticks in
+                result can contain a bit more to accommodate all ticks in
                 the latest second.
             whatToShow: One of 'Bid_Ask', 'Midpoint' or 'Trades'.
             useRTH: If True then only show data from within Regular
@@ -1105,7 +1141,7 @@ class IB:
         """
         Subscribe to tick data or request a snapshot.
         Returns the Ticker that holds the market data. The ticker will
-        inititially be empty and gradually (after a couple of seconds)
+        initially be empty and gradually (after a couple of seconds)
         be filled.
 
         https://interactivebrokers.github.io/tws-api/md_request.html
@@ -1317,9 +1353,9 @@ class IB:
         https://interactivebrokers.github.io/tws-api/market_scanners.html
 
         Args:
-            subscription: What to scan for.
+            subscription: Basic filters.
             scannerSubscriptionOptions: Unknown.
-            scannerSubscriptionFilterOptions: Unknown.
+            scannerSubscriptionFilterOptions: Advanced generic filters.
         """
         return self._run(
             self.reqScannerDataAsync(
@@ -1389,7 +1425,7 @@ class IB:
         Args:
             contract: Option contract.
             optionPrice: Option price to use in calculation.
-            underPrice: Price of the underlyer to use in calculation
+            underPrice: Price of the underlier to use in calculation
             implVolOptions: Unknown
         """
         return self._run(
@@ -1410,7 +1446,7 @@ class IB:
         Args:
             contract: Option contract.
             volatility: Option volatility to use in calculation.
-            underPrice: Price of the underlyer to use in calculation
+            underPrice: Price of the underlier to use in calculation
             implVolOptions: Unknown
         """
         return self._run(
@@ -1429,7 +1465,7 @@ class IB:
         https://interactivebrokers.github.io/tws-api/options.html
 
         Args:
-            underlyingSymbol: Symbol of underlyer contract.
+            underlyingSymbol: Symbol of underlier contract.
             futFopExchange: Exchange (only for ``FuturesOption``, otherwise
                 leave blank).
             underlyingSecType: The type of the underlying security, like
@@ -1575,20 +1611,34 @@ class IB:
     # now entering the parallel async universe
 
     async def connectAsync(
-            self, host='127.0.0.1', port=7497, clientId=1, timeout=2):
-        self.wrapper.clientId = clientId
-        await self.client.connectAsync(host, port, clientId, timeout)
-        accounts = self.client.getAccounts()
-        await asyncio.gather(
-            self.reqAccountUpdatesAsync(accounts[0]),
-            *(self.reqAccountUpdatesMultiAsync(a) for a in accounts),
-            self.reqPositionsAsync(),
-            self.reqExecutionsAsync())
-        if clientId == 0:
-            # autobind manual orders
-            self.reqAutoOpenOrders(True)
-        self._logger.info('Synchronization complete')
-        self.connectedEvent.emit()
+            self, host='127.0.0.1', port=7497, clientId=1,
+            timeout=2, readonly=False):
+
+        async def connect():
+            self.wrapper.clientId = clientId
+            await self.client.connectAsync(host, port, clientId, timeout)
+            if not readonly and self.client.serverVersion() >= 150:
+                await self.reqCompletedOrdersAsync(False)
+            accounts = self.client.getAccounts()
+            await asyncio.gather(
+                self.reqAccountUpdatesAsync(accounts[0]),
+                *(self.reqAccountUpdatesMultiAsync(a) for a in accounts),
+                self.reqPositionsAsync(),
+                self.reqExecutionsAsync())
+            if clientId == 0:
+                # autobind manual orders
+                self.reqAutoOpenOrders(True)
+            self._logger.info('Synchronization complete')
+            self.connectedEvent.emit()
+
+        if not self.isConnected():
+            try:
+                await asyncio.wait_for(connect(), timeout or None)
+            except Exception:
+                self.disconnect()
+                raise
+        else:
+            self._logger.warn('Already connected')
         return self
 
     async def qualifyContractsAsync(self, *contracts):
@@ -1660,8 +1710,15 @@ class IB:
         reqId = self.client.getReqId()
         future = self.wrapper.startReq(reqId)
         tags = (
-            ibapi.account_summary_tags.AccountSummaryTags.AllTags +
-            ',$LEDGER:ALL')
+            'AccountType,NetLiquidation,TotalCashValue,SettledCash,'
+            'AccruedCash,BuyingPower,EquityWithLoanValue,'
+            'PreviousEquityWithLoanValue,GrossPositionValue,ReqTEquity,'
+            'ReqTMargin,SMA,InitMarginReq,MaintMarginReq,AvailableFunds,'
+            'ExcessLiquidity,Cushion,FullInitMarginReq,FullMaintMarginReq,'
+            'FullAvailableFunds,FullExcessLiquidity,LookAheadNextChange,'
+            'LookAheadInitMarginReq,LookAheadMaintMarginReq,'
+            'LookAheadAvailableFunds,LookAheadExcessLiquidity,'
+            'HighestSeverity,DayTradesRemaining,Leverage,$LEDGER:ALL')
         self.client.reqAccountSummary(reqId, 'All', tags)
         return future
 
@@ -1673,6 +1730,11 @@ class IB:
     def reqAllOpenOrdersAsync(self):
         future = self.wrapper.startReq('openOrders')
         self.client.reqAllOpenOrders()
+        return future
+
+    def reqCompletedOrdersAsync(self, apiOnly):
+        future = self.wrapper.startReq('completedOrders')
+        self.client.reqCompletedOrders(apiOnly)
         return future
 
     def reqExecutionsAsync(self, execFilter=None):
@@ -1703,10 +1765,14 @@ class IB:
         except asyncio.TimeoutError:
             self._logger.error('reqMatchingSymbolsAsync: Timeout')
 
-    def reqMarketRuleAsync(self, marketRuleId):
+    async def reqMarketRuleAsync(self, marketRuleId):
         future = self.wrapper.startReq(f'marketRule-{marketRuleId}')
-        self.client.reqMarketRule(marketRuleId)
-        return future
+        try:
+            self.client.reqMarketRule(marketRuleId)
+            await asyncio.wait_for(future, 1)
+            return future.result()
+        except asyncio.TimeoutError:
+            self._logger.error('reqMarketRuleAsync: Timeout')
 
     def reqHistoricalDataAsync(
             self, contract, endDateTime,
